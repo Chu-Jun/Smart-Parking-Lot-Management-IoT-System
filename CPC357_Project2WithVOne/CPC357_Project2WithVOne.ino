@@ -1,27 +1,29 @@
+// Include necessary libraries
 #include "VOneMqttClient.h"
 #include <SPI.h>
 #include <MFRC522.h>
-#include <ESP32Servo.h> // Use ESP32Servo instead of Servo
+#include <ESP32Servo.h> 
 
-//define device id
+// Define device id based on the V-One platform
 const char* IRSensor1 = "e86f6f33-c7c2-481b-9e27-3d83df2ce7c7";
 const char* IRSensor2 = "5c0bb7d0-6175-473e-a80d-6618e7c568ed";
 
-// Pin configuration for RFID (Parking Lot 1 and 2 - SPI)
+// Pin configuration for RFID (Parking Lot 1 and 2 - Using SPI Interface)
 #define SS_PIN_1 7    // SDA/SS pin for Parking Lot 1
 #define RST_PIN_1 21  // RST pin for Parking Lot 1
-#define SS_PIN_2 42    // SDA/SS pin for Parking Lot 2
-#define RST_PIN_2 5  // RST pin for Parking Lot 2
+#define SS_PIN_2 42   // SDA/SS pin for Parking Lot 2
+#define RST_PIN_2 5   // RST pin for Parking Lot 2
 
 // Pin configuration for IR sensors and Servos
 #define IR_SENSOR_PIN_1 6   // IR sensor for Parking Lot 1
-#define SERVO_PIN_1 14       // Servo for Parking Lot 1
-#define IR_SENSOR_PIN_2 4    // IR sensor for Parking Lot 2
-#define SERVO_PIN_2 9        // Servo for Parking Lot 2
+#define SERVO_PIN_1 14      // Servo for Parking Lot 1
+#define IR_SENSOR_PIN_2 4   // IR sensor for Parking Lot 2
+#define SERVO_PIN_2 9       // Servo for Parking Lot 2
 
 // Instantiate RFID readers for SPI
 MFRC522 rfid1(SS_PIN_1, RST_PIN_1);
 MFRC522 rfid2(SS_PIN_2, RST_PIN_2);
+
 Servo barrierServo1, barrierServo2;
 
 // Variables for tracking time and car presence
@@ -29,13 +31,12 @@ unsigned long carEntryTime1 = 0, carExitTime1 = 0, totalUsageTime1 = 0;
 unsigned long carEntryTime2 = 0, carExitTime2 = 0, totalUsageTime2 = 0;
 bool carDetected1 = false, carDetected2 = false;
 
-//Create an instance of VOneMqttClient
+// Create an instance of VOneMqttClient
 VOneMqttClient voneClient;
 
+// Setup wifi to transmit data to V-One platform
 void setup_wifi() {
-
   delay(10);
-  // We start by connecting to a WiFi network
   Serial.println();
   Serial.print("Connecting to ");
   Serial.println(WIFI_SSID);
@@ -58,6 +59,7 @@ void setup() {
   // Initialize Serial Monitor
   Serial.println(F("Initializing Parking System..."));
 
+  // Setup the wifi
   setup_wifi();
   voneClient.setup();
 
@@ -79,6 +81,7 @@ void setup() {
   pinMode(IR_SENSOR_PIN_2, INPUT);
 }
 
+// Continuously checking if there is a car that would like to use the parking lot
 void loop() {
   // Handle Parking Lot 1 (RFID1)
   handleParkingLotSPI(1, rfid1, IR_SENSOR_PIN_1, barrierServo1, carDetected1, carEntryTime1, carExitTime1, totalUsageTime1, IRSensor1);
@@ -89,6 +92,7 @@ void loop() {
   delay(100); // Small delay to avoid rapid sensor readings
 }
 
+// Check if a RFID tag is scanned which shows that there is a authorized user that would like to use the lot
 void handleParkingLotSPI(
   int lotNumber,
   MFRC522 &rfid,
@@ -114,14 +118,17 @@ void handleParkingLotSPI(
     Serial.println();
 
     barrierServo.write(90); // Lower barrier
-    carEntryTime = millis(); // Start timing
+    voneClient.publishTelemetryData(irSensorKey, "InUse", 1); // Publish "InUse" = 1, to show the lot is occupied in monitoring dashboard
+    carEntryTime = millis(); // Start timing to calculate the lot usage time
 
     rfid.PICC_HaltA(); // Halt communication with the card
   }
 
+  // Check whether the car has entered the parking lot
   checkIRSensor(irSensorPin, carDetected, barrierServo, carEntryTime, carExitTime, totalUsageTime, lotNumber, irSensorKey);
 }
 
+// Check whether the car is in parking lot, if it is in parking lot, the barrier cannot be lifted
 void checkIRSensor(
   int irSensorPin,
   bool &carDetected,
@@ -145,6 +152,7 @@ void checkIRSensor(
       carDetected = false;
 
       barrierServo.write(0); // Raise barrier
+      voneClient.publishTelemetryData(irSensorKey, "InUse", 0); // Publish "InUse" = 0
       carExitTime = millis(); // Stop timing
       unsigned long usageTime = carExitTime - carEntryTime; // Calculate time in milliseconds
       totalUsageTime += usageTime;
@@ -159,13 +167,12 @@ void checkIRSensor(
 
       if (!voneClient.connected()) {
         voneClient.reconnect();
-        String errorMsg = "Infrared sensor Fail";
         voneClient.publishDeviceStatusEvent(irSensorKey, true);
       }
       voneClient.loop();
 
       // Publish usage time in minutes as a float
-      voneClient.publishTelemetryData(irSensorKey, "UsageTime", usageTimeMinutes);
+      voneClient.publishTelemetryData(irSensorKey, "Obstacle", usageTimeMinutes);
     }
   }
 }
